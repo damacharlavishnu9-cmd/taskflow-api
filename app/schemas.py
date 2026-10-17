@@ -63,3 +63,17 @@ class UserWithKey(BaseModel):
     id: int
     username: str
     api_key: str
+
+
+class ProjectStats(BaseModel):
+    total: int
+    completed: int
+    open: int
+    overdue: int
+    completion_rate: float
+    by_priority: dict[str, int]
+
+
+class ProjectSummary(ProjectStats):
+    project_id: int
+    name: str
