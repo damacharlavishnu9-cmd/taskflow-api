@@ -41,6 +41,12 @@ projects (it can't create projects). Admin access is disabled when unset.
 Upgrading a database created before authentication keeps existing projects
 without an owner; they are visible only to the admin key until reassigned.
 
+## Statistics
+
+- `GET /projects/{id}/stats` returns task totals, completed/open/overdue
+  counts, the completion rate and a per-priority breakdown
+- `GET /stats` returns the same figures for every project you own
+
 ## Running locally
 
 ```bash
