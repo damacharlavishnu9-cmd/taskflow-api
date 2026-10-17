@@ -198,3 +198,14 @@ def test_migrates_pre_auth_database(tmp_path):
     conn.execute("DELETE FROM projects WHERE id = 1")
     assert conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0] == 0
     conn.close()
+
+
+def test_ownerless_projects_hidden_from_users(client, anon_client, other_headers):
+    conn = db.connect()
+    conn.execute("INSERT INTO projects (name, owner_id) VALUES ('legacy', NULL)")
+    conn.commit()
+    pid = conn.execute("SELECT id FROM projects WHERE name = 'legacy'").fetchone()[0]
+    conn.close()
+    for headers in (client.headers, other_headers):
+        assert anon_client.get(f"/projects/{pid}", headers=headers).status_code == 404
+        assert anon_client.delete(f"/projects/{pid}", headers=headers).status_code == 404

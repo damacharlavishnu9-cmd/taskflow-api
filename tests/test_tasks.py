@@ -149,3 +149,16 @@ def test_sort_created_desc_breaks_ties_newest_first(client, project):
         f"/projects/{project['id']}/tasks", params={"sort": "created", "order": "desc"}
     ).json()
     assert [t["id"] for t in resp["items"]] == [3, 2, 1]
+
+
+def test_reopen_task_and_clear_fields(client, project):
+    task = client.post(
+        f"/projects/{project['id']}/tasks",
+        json={"title": "x", "description": "notes", "due_date": "2026-11-01"},
+    ).json()
+    url = f"/tasks/{task['id']}"
+    client.patch(url, json={"completed": True})
+    body = client.patch(
+        url, json={"completed": False, "description": "", "due_date": None}
+    ).json()
+    assert (body["completed"], body["description"], body["due_date"]) == (False, "", None)

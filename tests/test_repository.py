@@ -1,3 +1,5 @@
+from datetime import date
+
 import pytest
 
 from app import db, repository as repo
@@ -51,3 +53,23 @@ def test_list_tasks_paginates(conn):
     )
     assert [t["title"] for t in page["items"]] == ["t2", "t3"]
     assert page["total_pages"] == 3
+
+
+def test_update_task_applies_falsy_values(conn):
+    pid = repo.create_project(conn, 1, "Website", "")
+    tid = repo.create_task(conn, pid, "Draft", "notes", 3, date(2026, 11, 1))
+    repo.update_task(conn, tid, {"completed": True})
+    repo.update_task(conn, tid, {"completed": False, "description": "", "due_date": None})
+    task = repo.get_task(conn, tid, USER)
+    assert (task["completed"], task["description"], task["due_date"]) == (0, "", None)
+
+
+def test_ownerless_project_is_admin_only(conn):
+    conn.execute("INSERT INTO projects (name, owner_id) VALUES ('legacy', NULL)")
+    pid = conn.execute("SELECT id FROM projects WHERE name = 'legacy'").fetchone()[0]
+    tid = repo.create_task(conn, pid, "old", "", 3, None)
+    assert repo.get_project(conn, pid, USER) is None
+    assert repo.get_task(conn, tid, USER) is None
+    admin = {"id": None, "username": "admin", "is_admin": True}
+    assert repo.get_project(conn, pid, admin)["name"] == "legacy"
+    assert repo.get_task(conn, tid, admin)["title"] == "old"

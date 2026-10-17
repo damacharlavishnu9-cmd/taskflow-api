@@ -20,7 +20,8 @@ class DuplicateProjectName(Exception):
 
 
 def _can_access(user: dict, owner_id: int | None) -> bool:
-    return user["is_admin"] or owner_id in (user["id"], None)
+    # Ownerless (pre-auth) projects are admin-only until reassigned.
+    return user["is_admin"] or (owner_id is not None and owner_id == user["id"])
 
 
 # --- projects ---------------------------------------------------------------
@@ -147,11 +148,16 @@ def list_tasks(
 
 
 def update_task(conn: sqlite3.Connection, task_id: int, changes: dict) -> None:
-    # Drop empty values so callers can pass a full model dump.
-    changes = {col: value for col, value in changes.items() if value}
+    """Apply a partial update.
+
+    ``changes`` must only contain fields the client sent (``exclude_unset``);
+    falsy values such as ``completed=False`` or ``due_date=None`` are real
+    updates and are applied as given.
+    """
+    changes = dict(changes)
     if not changes:
         return
-    if "due_date" in changes:
+    if changes.get("due_date") is not None:
         changes["due_date"] = changes["due_date"].isoformat()
     # Column names come from the TaskUpdate schema, never from user input.
     assignments = ", ".join(f"{col} = ?" for col in changes)
