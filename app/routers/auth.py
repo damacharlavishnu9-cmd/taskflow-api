@@ -8,6 +8,10 @@ from app.schemas import Credentials, Registration, UserWithKey
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+# Verified against when the username doesn't exist, so unknown and known
+# usernames take the same time and can't be told apart.
+_DUMMY_PASSWORD_HASH = hash_password("timing-equalizer")
+
 
 @router.post("/register", response_model=UserWithKey, status_code=status.HTTP_201_CREATED)
 def register(body: Registration, conn: sqlite3.Connection = Depends(get_conn)):
@@ -34,7 +38,8 @@ def login(body: Credentials, conn: sqlite3.Connection = Depends(get_conn)):
         "SELECT id, username, password_hash FROM users WHERE username = ?",
         (body.username,),
     ).fetchone()
-    if row is None or not verify_password(body.password, row["password_hash"]):
+    stored_hash = row["password_hash"] if row else _DUMMY_PASSWORD_HASH
+    if not verify_password(body.password, stored_hash) or row is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid credentials")
 
     api_key = generate_api_key()

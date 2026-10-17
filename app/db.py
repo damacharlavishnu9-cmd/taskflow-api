@@ -61,8 +61,7 @@ def _migrate_projects_add_owner(conn: sqlite3.Connection) -> None:
         conn.executescript(
             """
             BEGIN;
-            ALTER TABLE projects RENAME TO projects_old;
-            CREATE TABLE projects (
+            CREATE TABLE projects_new (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 owner_id    INTEGER REFERENCES users(id),
                 name        TEXT NOT NULL,
@@ -70,9 +69,13 @@ def _migrate_projects_add_owner(conn: sqlite3.Connection) -> None:
                 created_at  TEXT NOT NULL DEFAULT (datetime('now')),
                 UNIQUE (owner_id, name)
             );
-            INSERT INTO projects (id, name, description, created_at)
-                SELECT id, name, description, created_at FROM projects_old;
-            DROP TABLE projects_old;
+            INSERT INTO projects_new (id, name, description, created_at)
+                SELECT id, name, description, created_at FROM projects;
+            DROP TABLE projects;
+            -- Renaming the new table (not the old one) keeps tasks.project_id
+            -- pointing at "projects"; SQLite 3.26+ rewrites FK references
+            -- to follow a renamed table.
+            ALTER TABLE projects_new RENAME TO projects;
             COMMIT;
             """
         )

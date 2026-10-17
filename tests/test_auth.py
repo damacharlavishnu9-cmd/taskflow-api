@@ -18,12 +18,25 @@ def test_register_duplicate_username(anon_client):
     assert resp.status_code == 409
 
 
-@pytest.mark.parametrize("password", ["", "short", "x" * 129])
-def test_register_rejects_bad_password_length(anon_client, password):
+@pytest.mark.parametrize(
+    "username,password,expected",
+    [
+        ("bob", "", 422),
+        ("bob", "x" * 7, 422),
+        ("bob", "x" * 8, 201),
+        ("bob", "x" * 128, 201),
+        ("bob", "x" * 129, 422),
+        ("bo", "x" * 8, 422),
+        ("b" * 3, "x" * 8, 201),
+        ("b" * 50, "x" * 8, 201),
+        ("b" * 51, "x" * 8, 422),
+    ],
+)
+def test_register_length_boundaries(anon_client, username, password, expected):
     resp = anon_client.post(
-        "/auth/register", json={"username": "bob", "password": password}
+        "/auth/register", json={"username": username, "password": password}
     )
-    assert resp.status_code == 422
+    assert resp.status_code == expected
 
 
 def test_login_issues_new_key_and_revokes_old(anon_client):
@@ -60,7 +73,8 @@ def test_passwords_and_keys_not_stored_in_plaintext(anon_client):
     conn.close()
     assert row["password_hash"].startswith("scrypt$")
     assert "hunter2222" not in row["password_hash"]
-    assert row["api_key_hash"] != key
+    assert row["api_key_hash"] == auth.hash_api_key(key)
+    assert key not in row["api_key_hash"]
 
 
 def test_same_password_gets_different_hashes():
@@ -92,10 +106,41 @@ def test_admin_key_sees_all_but_cannot_create(client, project, anon_client, monk
     assert resp.status_code == 403
 
 
+def test_admin_key_manages_other_users_projects_and_tasks(
+    client, project, anon_client, monkeypatch
+):
+    monkeypatch.setattr(auth, "ADMIN_API_KEY", "tf_admin_test")
+    headers = {"X-API-Key": "tf_admin_test"}
+    pid = project["id"]
+    task = client.post(f"/projects/{pid}/tasks", json={"title": "t"}).json()
+
+    assert anon_client.get(f"/projects/{pid}", headers=headers).status_code == 200
+    assert anon_client.get(f"/projects/{pid}/tasks", headers=headers).json()["total"] == 1
+    resp = anon_client.patch(
+        f"/tasks/{task['id']}", json={"completed": True}, headers=headers
+    )
+    assert resp.json()["completed"] is True
+    assert anon_client.delete(f"/projects/{pid}", headers=headers).status_code == 204
+    assert client.get(f"/projects/{pid}").status_code == 404
+
+
 def test_users_cannot_see_each_others_projects(client, project, anon_client, other_headers):
     assert anon_client.get("/projects", headers=other_headers).json() == []
     resp = anon_client.get(f"/projects/{project['id']}", headers=other_headers)
     assert resp.status_code == 404
+
+
+def test_users_cannot_modify_each_others_projects(
+    client, project, anon_client, other_headers
+):
+    pid = project["id"]
+    assert anon_client.get(f"/projects/{pid}/tasks", headers=other_headers).status_code == 404
+    resp = anon_client.post(
+        f"/projects/{pid}/tasks", json={"title": "spam"}, headers=other_headers
+    )
+    assert resp.status_code == 404
+    assert anon_client.delete(f"/projects/{pid}", headers=other_headers).status_code == 404
+    assert client.get(f"/projects/{pid}/tasks").json()["total"] == 0
 
 
 def test_users_cannot_touch_each_others_tasks(client, project, anon_client, other_headers):
@@ -146,4 +191,10 @@ def test_migrates_pre_auth_database(tmp_path):
     assert "owner_id" in columns
     assert conn.execute("SELECT owner_id FROM projects").fetchone()[0] is None
     assert conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0] == 1
+
+    # Foreign keys must still point at "projects": new tasks insert and
+    # deleting a project cascades to its tasks.
+    conn.execute("INSERT INTO tasks (project_id, title) VALUES (1, 'new task')")
+    conn.execute("DELETE FROM projects WHERE id = 1")
+    assert conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0] == 0
     conn.close()
