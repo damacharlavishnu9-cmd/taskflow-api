@@ -57,7 +57,7 @@ def list_tasks(
     due_before: date | None = None,
     sort: Literal["created", "due", "priority"] = "created",
     order: Literal["asc", "desc"] = "asc",
-    page: int = Query(default=1, ge=1),
+    page: int = Query(default=1, ge=1, le=10**9),
     page_size: int = Query(default=20, ge=1, le=100),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
@@ -66,7 +66,7 @@ def list_tasks(
 
     where = ["project_id = ?"]
     params: list = [project_id]
-    if completed:
+    if completed is not None:
         where.append("completed = ?")
         params.append(int(completed))
     if priority is not None:
@@ -81,7 +81,10 @@ def list_tasks(
         f"SELECT COUNT(*) FROM tasks WHERE {where_sql}", params
     ).fetchone()[0]
 
-    order_sql = f"{SORT_COLUMNS[sort]} {order.upper()}, id ASC"
+    column = SORT_COLUMNS[sort]
+    # Keep tasks without a due date at the end regardless of direction.
+    nulls_last = f"{column} IS NULL, " if sort == "due" else ""
+    order_sql = f"{nulls_last}{column} {order.upper()}, id ASC"
     rows = conn.execute(
         f"SELECT * FROM tasks WHERE {where_sql} ORDER BY {order_sql} LIMIT ? OFFSET ?",
         (*params, page_size, (page - 1) * page_size),
@@ -92,7 +95,7 @@ def list_tasks(
         "total": total,
         "page": page,
         "page_size": page_size,
-        "total_pages": total // page_size,
+        "total_pages": math.ceil(total / page_size),
     }
 
 
