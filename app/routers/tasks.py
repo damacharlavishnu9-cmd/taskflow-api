@@ -5,6 +5,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from app.auth import current_user
 from app.db import get_conn
 from app.routers.projects import _get_project_or_404
 from app.schemas import Task, TaskCreate, TaskPage, TaskUpdate
@@ -18,9 +19,16 @@ SORT_COLUMNS = {
 }
 
 
-def _get_task_or_404(conn: sqlite3.Connection, task_id: int) -> sqlite3.Row:
-    row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
-    if row is None:
+def _get_task_or_404(
+    conn: sqlite3.Connection, task_id: int, user: dict
+) -> sqlite3.Row:
+    """Fetch a task, hiding tasks in projects the caller doesn't own."""
+    row = conn.execute(
+        "SELECT t.*, p.owner_id FROM tasks t JOIN projects p ON p.id = t.project_id"
+        " WHERE t.id = ?",
+        (task_id,),
+    ).fetchone()
+    if row is None or (not user["is_admin"] and row["owner_id"] != user["id"]):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Task not found")
     return row
 
@@ -31,9 +39,12 @@ def _get_task_or_404(conn: sqlite3.Connection, task_id: int) -> sqlite3.Row:
     status_code=status.HTTP_201_CREATED,
 )
 def create_task(
-    project_id: int, body: TaskCreate, conn: sqlite3.Connection = Depends(get_conn)
+    project_id: int,
+    body: TaskCreate,
+    conn: sqlite3.Connection = Depends(get_conn),
+    user: dict = Depends(current_user),
 ):
-    _get_project_or_404(conn, project_id)
+    _get_project_or_404(conn, project_id, user)
     cur = conn.execute(
         "INSERT INTO tasks (project_id, title, description, priority, due_date)"
         " VALUES (?, ?, ?, ?, ?)",
@@ -46,7 +57,7 @@ def create_task(
         ),
     )
     conn.commit()
-    return dict(_get_task_or_404(conn, cur.lastrowid))
+    return dict(_get_task_or_404(conn, cur.lastrowid, user))
 
 
 @router.get("/projects/{project_id}/tasks", response_model=TaskPage)
@@ -60,9 +71,10 @@ def list_tasks(
     page: int = Query(default=1, ge=1, le=10**9),
     page_size: int = Query(default=20, ge=1, le=100),
     conn: sqlite3.Connection = Depends(get_conn),
+    user: dict = Depends(current_user),
 ):
     """List a project's tasks with optional filters, sorting and pagination."""
-    _get_project_or_404(conn, project_id)
+    _get_project_or_404(conn, project_id, user)
 
     where = ["project_id = ?"]
     params: list = [project_id]
@@ -100,15 +112,22 @@ def list_tasks(
 
 
 @router.get("/tasks/{task_id}", response_model=Task)
-def get_task(task_id: int, conn: sqlite3.Connection = Depends(get_conn)):
-    return dict(_get_task_or_404(conn, task_id))
+def get_task(
+    task_id: int,
+    conn: sqlite3.Connection = Depends(get_conn),
+    user: dict = Depends(current_user),
+):
+    return dict(_get_task_or_404(conn, task_id, user))
 
 
 @router.patch("/tasks/{task_id}", response_model=Task)
 def update_task(
-    task_id: int, body: TaskUpdate, conn: sqlite3.Connection = Depends(get_conn)
+    task_id: int,
+    body: TaskUpdate,
+    conn: sqlite3.Connection = Depends(get_conn),
+    user: dict = Depends(current_user),
 ):
-    _get_task_or_404(conn, task_id)
+    _get_task_or_404(conn, task_id, user)
     changes = body.model_dump(exclude_unset=True)
     if changes:
         if changes.get("due_date") is not None:
@@ -120,11 +139,15 @@ def update_task(
             (*changes.values(), task_id),
         )
         conn.commit()
-    return dict(_get_task_or_404(conn, task_id))
+    return dict(_get_task_or_404(conn, task_id, user))
 
 
 @router.delete("/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_task(task_id: int, conn: sqlite3.Connection = Depends(get_conn)):
-    _get_task_or_404(conn, task_id)
+def delete_task(
+    task_id: int,
+    conn: sqlite3.Connection = Depends(get_conn),
+    user: dict = Depends(current_user),
+):
+    _get_task_or_404(conn, task_id, user)
     conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
     conn.commit()
