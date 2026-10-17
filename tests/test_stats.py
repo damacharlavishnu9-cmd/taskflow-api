@@ -1,6 +1,9 @@
+from datetime import datetime, timezone
+
 import pytest
 
 from app import auth, db
+from app.routers import stats as stats_router
 
 
 def _task(client, pid, **fields):
@@ -85,15 +88,17 @@ def test_admin_dashboard_sees_all_projects(
 
 @pytest.fixture
 def count_stats_queries(monkeypatch):
-    """Count SELECTs against tasks issued while serving a request."""
+    """Count every SELECT issued while serving a request, except the auth lookup."""
     queries = []
     real_connect = db.connect
 
+    def record(sql):
+        if sql.lstrip().upper().startswith("SELECT") and "FROM users" not in sql:
+            queries.append(sql)
+
     def traced_connect(*args, **kwargs):
         conn = real_connect(*args, **kwargs)
-        conn.set_trace_callback(
-            lambda sql: queries.append(sql) if "FROM projects p" in sql else None
-        )
+        conn.set_trace_callback(record)
         return conn
 
     monkeypatch.setattr(db, "connect", traced_connect)
@@ -107,3 +112,44 @@ def test_dashboard_query_count_is_constant(client, count_stats_queries):
     count_stats_queries.clear()
     assert len(client.get("/stats").json()) == 10
     assert len(count_stats_queries) == 1
+
+
+def test_dashboard_figures_and_as_of(client):
+    a = client.post("/projects", json={"name": "A"}).json()["id"]
+    b = client.post("/projects", json={"name": "B"}).json()["id"]
+    done = _task(client, a, priority=1, due_date="2026-10-01")
+    _task(client, a, priority=2, due_date="2026-10-01")
+    _task(client, b, priority=5, due_date="2026-10-20")
+    client.patch(f"/tasks/{done['id']}", json={"completed": True})
+
+    by_name = lambda resp: {s["name"]: s for s in resp.json()}
+    stats = by_name(client.get("/stats", params={"as_of": "2026-10-15"}))
+    assert stats["A"]["completed"] == 1
+    assert stats["A"]["overdue"] == 1
+    assert stats["A"]["completion_rate"] == 0.5
+    assert stats["A"]["by_priority"] == {"1": 1, "2": 1, "3": 0, "4": 0, "5": 0}
+    assert stats["B"]["overdue"] == 0
+    assert stats["B"]["by_priority"]["5"] == 1
+
+    later = by_name(client.get("/stats", params={"as_of": "2026-10-21"}))
+    assert later["B"]["overdue"] == 1
+
+
+class _FrozenDatetime(datetime):
+    frozen: datetime
+
+    @classmethod
+    def now(cls, tz=None):
+        return cls.frozen.astimezone(tz) if tz else cls.frozen
+
+
+def test_default_cutoff_uses_utc_date(client, project, monkeypatch):
+    # 23:30 UTC on Oct 17 is already Oct 18 in UTC+5:30; the cut-off must
+    # follow the UTC date, so a task due Oct 17 is not yet overdue.
+    _FrozenDatetime.frozen = datetime(2026, 10, 17, 23, 30, tzinfo=timezone.utc)
+    monkeypatch.setattr(stats_router, "datetime", _FrozenDatetime)
+    _task(client, project["id"], due_date="2026-10-17")
+    assert client.get(f"/projects/{project['id']}/stats").json()["overdue"] == 0
+
+    _FrozenDatetime.frozen = datetime(2026, 10, 18, 0, 30, tzinfo=timezone.utc)
+    assert client.get(f"/projects/{project['id']}/stats").json()["overdue"] == 1
