@@ -19,9 +19,16 @@ SORT_COLUMNS = {
 }
 
 
-def _get_task_or_404(conn: sqlite3.Connection, task_id: int) -> sqlite3.Row:
-    row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
-    if row is None:
+def _get_task_or_404(
+    conn: sqlite3.Connection, task_id: int, user: dict
+) -> sqlite3.Row:
+    """Fetch a task, hiding tasks in projects the caller doesn't own."""
+    row = conn.execute(
+        "SELECT t.*, p.owner_id FROM tasks t JOIN projects p ON p.id = t.project_id"
+        " WHERE t.id = ?",
+        (task_id,),
+    ).fetchone()
+    if row is None or (not user["is_admin"] and row["owner_id"] != user["id"]):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Task not found")
     return row
 
@@ -50,7 +57,7 @@ def create_task(
         ),
     )
     conn.commit()
-    return dict(_get_task_or_404(conn, cur.lastrowid))
+    return dict(_get_task_or_404(conn, cur.lastrowid, user))
 
 
 @router.get("/projects/{project_id}/tasks", response_model=TaskPage)
@@ -110,7 +117,7 @@ def get_task(
     conn: sqlite3.Connection = Depends(get_conn),
     user: dict = Depends(current_user),
 ):
-    return dict(_get_task_or_404(conn, task_id))
+    return dict(_get_task_or_404(conn, task_id, user))
 
 
 @router.patch("/tasks/{task_id}", response_model=Task)
@@ -120,7 +127,7 @@ def update_task(
     conn: sqlite3.Connection = Depends(get_conn),
     user: dict = Depends(current_user),
 ):
-    _get_task_or_404(conn, task_id)
+    _get_task_or_404(conn, task_id, user)
     changes = body.model_dump(exclude_unset=True)
     if changes:
         if changes.get("due_date") is not None:
@@ -132,7 +139,7 @@ def update_task(
             (*changes.values(), task_id),
         )
         conn.commit()
-    return dict(_get_task_or_404(conn, task_id))
+    return dict(_get_task_or_404(conn, task_id, user))
 
 
 @router.delete("/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -141,6 +148,6 @@ def delete_task(
     conn: sqlite3.Connection = Depends(get_conn),
     user: dict = Depends(current_user),
 ):
-    _get_task_or_404(conn, task_id)
+    _get_task_or_404(conn, task_id, user)
     conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
     conn.commit()

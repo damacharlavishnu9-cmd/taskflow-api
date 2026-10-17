@@ -25,13 +25,21 @@ Responses are paginated: `{"items": [...], "total", "page", "page_size", "total_
 
 ## Authentication
 
-All `/projects` and `/tasks` endpoints require an `X-API-Key` header.
+All `/projects`, `/tasks` and `/stats` endpoints require an `X-API-Key` header.
 
-- `POST /auth/register` with `{"username", "password"}` returns your API key
-- `POST /auth/login` with the same body returns your key again
+- `POST /auth/register` with `{"username", "password"}` (password 8–128
+  characters) returns your API key
+- `POST /auth/login` with the same body issues a **new** key and revokes the
+  previous one. Keys are stored hashed and can't be shown again
 
-Projects are private to the user who created them. Set `TASKFLOW_ADMIN_KEY`
-to configure an admin key that can see all projects.
+Projects are private to the user who created them, and project names only
+need to be unique per user.
+
+Set `TASKFLOW_ADMIN_KEY` to enable an admin key that can see and manage all
+projects (it can't create projects). Admin access is disabled when unset.
+
+Upgrading a database created before authentication keeps existing projects
+without an owner; they are visible only to the admin key until reassigned.
 
 ## Running locally
 

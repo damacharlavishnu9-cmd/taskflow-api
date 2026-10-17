@@ -24,6 +24,10 @@ def create_project(
     conn: sqlite3.Connection = Depends(get_conn),
     user: dict = Depends(current_user),
 ):
+    if user["is_admin"]:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "The admin key can't own projects; use a user key"
+        )
     try:
         cur = conn.execute(
             "INSERT INTO projects (name, description, owner_id) VALUES (?, ?, ?)",
