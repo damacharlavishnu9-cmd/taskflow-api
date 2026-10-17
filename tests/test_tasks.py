@@ -36,7 +36,8 @@ def test_list_tasks_scoped_to_project(client, project):
     other = client.post("/projects", json={"name": "Other"}).json()
     client.post(f"/projects/{project['id']}/tasks", json={"title": "a"})
     client.post(f"/projects/{other['id']}/tasks", json={"title": "b"})
-    titles = [t["title"] for t in client.get(f"/projects/{project['id']}/tasks").json()]
+    resp = client.get(f"/projects/{project['id']}/tasks").json()
+    titles = [t["title"] for t in resp["items"]]
     assert titles == ["a"]
 
 
@@ -44,3 +45,107 @@ def test_delete_task(client, project):
     task = client.post(f"/projects/{project['id']}/tasks", json={"title": "x"}).json()
     assert client.delete(f"/tasks/{task['id']}").status_code == 204
     assert client.get(f"/tasks/{task['id']}").status_code == 404
+
+
+def _seed(client, project_id, n, **overrides):
+    for i in range(n):
+        client.post(
+            f"/projects/{project_id}/tasks", json={"title": f"task {i}", **overrides}
+        )
+
+
+def test_pagination(client, project):
+    _seed(client, project["id"], 20)
+    resp = client.get(
+        f"/projects/{project['id']}/tasks", params={"page": 2, "page_size": 10}
+    ).json()
+    assert resp["total"] == 20
+    assert resp["total_pages"] == 2
+    assert [t["title"] for t in resp["items"]] == [f"task {i}" for i in range(10, 20)]
+
+
+def test_page_size_capped(client, project):
+    resp = client.get(f"/projects/{project['id']}/tasks", params={"page_size": 500})
+    assert resp.status_code == 422
+
+
+def test_filter_completed(client, project):
+    _seed(client, project["id"], 3)
+    client.patch("/tasks/1", json={"completed": True})
+    resp = client.get(
+        f"/projects/{project['id']}/tasks", params={"completed": "true"}
+    ).json()
+    assert resp["total"] == 1
+    assert resp["items"][0]["id"] == 1
+
+
+def test_filter_priority_and_due_before(client, project):
+    pid = project["id"]
+    client.post(f"/projects/{pid}/tasks", json={"title": "urgent", "priority": 1, "due_date": "2026-10-01"})
+    client.post(f"/projects/{pid}/tasks", json={"title": "later", "priority": 1, "due_date": "2026-12-01"})
+    client.post(f"/projects/{pid}/tasks", json={"title": "low", "priority": 5, "due_date": "2026-10-01"})
+    resp = client.get(
+        f"/projects/{pid}/tasks", params={"priority": 1, "due_before": "2026-11-01"}
+    ).json()
+    assert [t["title"] for t in resp["items"]] == ["urgent"]
+
+
+def test_sort_by_priority_desc(client, project):
+    pid = project["id"]
+    for p in (2, 5, 1):
+        client.post(f"/projects/{pid}/tasks", json={"title": f"p{p}", "priority": p})
+    resp = client.get(
+        f"/projects/{pid}/tasks", params={"sort": "priority", "order": "desc"}
+    ).json()
+    assert [t["priority"] for t in resp["items"]] == [5, 2, 1]
+
+
+def test_filter_not_completed(client, project):
+    _seed(client, project["id"], 3)
+    client.patch("/tasks/1", json={"completed": True})
+    resp = client.get(
+        f"/projects/{project['id']}/tasks", params={"completed": "false"}
+    ).json()
+    assert resp["total"] == 2
+    assert all(not t["completed"] for t in resp["items"])
+
+
+def test_total_pages_counts_partial_last_page(client, project):
+    _seed(client, project["id"], 25)
+    resp = client.get(
+        f"/projects/{project['id']}/tasks", params={"page": 3, "page_size": 10}
+    ).json()
+    assert resp["total_pages"] == 3
+    assert len(resp["items"]) == 5
+
+
+def test_total_pages_with_fewer_items_than_page_size(client, project):
+    _seed(client, project["id"], 5)
+    resp = client.get(f"/projects/{project['id']}/tasks").json()
+    assert resp["total_pages"] == 1
+
+
+def test_sort_by_due_puts_undated_tasks_last(client, project):
+    pid = project["id"]
+    client.post(f"/projects/{pid}/tasks", json={"title": "undated"})
+    client.post(f"/projects/{pid}/tasks", json={"title": "dec", "due_date": "2026-12-01"})
+    client.post(f"/projects/{pid}/tasks", json={"title": "nov", "due_date": "2026-11-01"})
+    for order, expected in (("asc", ["nov", "dec", "undated"]), ("desc", ["dec", "nov", "undated"])):
+        resp = client.get(
+            f"/projects/{pid}/tasks", params={"sort": "due", "order": order}
+        ).json()
+        assert [t["title"] for t in resp["items"]] == expected
+
+
+def test_huge_page_number_rejected(client, project):
+    resp = client.get(f"/projects/{project['id']}/tasks", params={"page": 10**20})
+    assert resp.status_code == 422
+
+
+def test_sort_created_desc_breaks_ties_newest_first(client, project):
+    # Tasks created in the same second share created_at; id decides the order.
+    _seed(client, project["id"], 3)
+    resp = client.get(
+        f"/projects/{project['id']}/tasks", params={"sort": "created", "order": "desc"}
+    ).json()
+    assert [t["id"] for t in resp["items"]] == [3, 2, 1]

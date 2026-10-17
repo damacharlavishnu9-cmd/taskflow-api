@@ -1,12 +1,21 @@
+import math
 import sqlite3
+from datetime import date
+from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.db import get_conn
 from app.routers.projects import _get_project_or_404
-from app.schemas import Task, TaskCreate, TaskUpdate
+from app.schemas import Task, TaskCreate, TaskPage, TaskUpdate
 
 router = APIRouter(tags=["tasks"])
+
+SORT_COLUMNS = {
+    "created": "created_at",
+    "due": "due_date",
+    "priority": "priority",
+}
 
 
 def _get_task_or_404(conn: sqlite3.Connection, task_id: int) -> sqlite3.Row:
@@ -40,13 +49,54 @@ def create_task(
     return dict(_get_task_or_404(conn, cur.lastrowid))
 
 
-@router.get("/projects/{project_id}/tasks", response_model=list[Task])
-def list_tasks(project_id: int, conn: sqlite3.Connection = Depends(get_conn)):
+@router.get("/projects/{project_id}/tasks", response_model=TaskPage)
+def list_tasks(
+    project_id: int,
+    completed: bool | None = None,
+    priority: int | None = Query(default=None, ge=1, le=5),
+    due_before: date | None = None,
+    sort: Literal["created", "due", "priority"] = "created",
+    order: Literal["asc", "desc"] = "asc",
+    page: int = Query(default=1, ge=1, le=10**9),
+    page_size: int = Query(default=20, ge=1, le=100),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """List a project's tasks with optional filters, sorting and pagination."""
     _get_project_or_404(conn, project_id)
+
+    where = ["project_id = ?"]
+    params: list = [project_id]
+    if completed is not None:
+        where.append("completed = ?")
+        params.append(int(completed))
+    if priority is not None:
+        where.append("priority = ?")
+        params.append(priority)
+    if due_before is not None:
+        where.append("due_date < ?")
+        params.append(due_before.isoformat())
+    where_sql = " AND ".join(where)
+
+    total = conn.execute(
+        f"SELECT COUNT(*) FROM tasks WHERE {where_sql}", params
+    ).fetchone()[0]
+
+    column = SORT_COLUMNS[sort]
+    # Keep tasks without a due date at the end regardless of direction.
+    nulls_last = f"{column} IS NULL, " if sort == "due" else ""
+    order_sql = f"{nulls_last}{column} {order.upper()}, id {order.upper()}"
     rows = conn.execute(
-        "SELECT * FROM tasks WHERE project_id = ? ORDER BY id", (project_id,)
+        f"SELECT * FROM tasks WHERE {where_sql} ORDER BY {order_sql} LIMIT ? OFFSET ?",
+        (*params, page_size, (page - 1) * page_size),
     ).fetchall()
-    return [dict(r) for r in rows]
+
+    return {
+        "items": [dict(r) for r in rows],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": math.ceil(total / page_size),
+    }
 
 
 @router.get("/tasks/{task_id}", response_model=Task)
