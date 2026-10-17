@@ -38,3 +38,11 @@ class Task(BaseModel):
     completed: bool
     due_date: date | None
     created_at: datetime
+
+
+class TaskPage(BaseModel):
+    items: list[Task]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int

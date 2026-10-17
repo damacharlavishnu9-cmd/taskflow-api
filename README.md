@@ -8,6 +8,21 @@ A small task-management REST API built with FastAPI and SQLite.
 - Tasks: create, list per project, fetch, partial update, delete
 - Input validation with Pydantic (priority 1–5, length limits, ISO dates)
 
+## Listing tasks
+
+`GET /projects/{id}/tasks` supports:
+
+| Param | Description |
+|---|---|
+| `completed` | Filter by completion state (`true` / `false`) |
+| `priority` | Filter by exact priority (1–5) |
+| `due_before` | Only tasks due before this ISO date |
+| `sort` | `created` (default), `due`, or `priority` |
+| `order` | `asc` (default) or `desc` |
+| `page`, `page_size` | 1-based page number; page size 1–100 (default 20) |
+
+Responses are paginated: `{"items": [...], "total", "page", "page_size", "total_pages"}`.
+
 ## Running locally
 
 ```bash
