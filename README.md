@@ -23,6 +23,16 @@ A small task-management REST API built with FastAPI and SQLite.
 
 Responses are paginated: `{"items": [...], "total", "page", "page_size", "total_pages"}`.
 
+## Authentication
+
+All `/projects` and `/tasks` endpoints require an `X-API-Key` header.
+
+- `POST /auth/register` with `{"username", "password"}` returns your API key
+- `POST /auth/login` with the same body returns your key again
+
+Projects are private to the user who created them. Set `TASKFLOW_ADMIN_KEY`
+to configure an admin key that can see all projects.
+
 ## Running locally
 
 ```bash

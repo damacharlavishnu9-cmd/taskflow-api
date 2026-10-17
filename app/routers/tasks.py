@@ -5,6 +5,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from app.auth import current_user
 from app.db import get_conn
 from app.routers.projects import _get_project_or_404
 from app.schemas import Task, TaskCreate, TaskPage, TaskUpdate
@@ -31,9 +32,12 @@ def _get_task_or_404(conn: sqlite3.Connection, task_id: int) -> sqlite3.Row:
     status_code=status.HTTP_201_CREATED,
 )
 def create_task(
-    project_id: int, body: TaskCreate, conn: sqlite3.Connection = Depends(get_conn)
+    project_id: int,
+    body: TaskCreate,
+    conn: sqlite3.Connection = Depends(get_conn),
+    user: dict = Depends(current_user),
 ):
-    _get_project_or_404(conn, project_id)
+    _get_project_or_404(conn, project_id, user)
     cur = conn.execute(
         "INSERT INTO tasks (project_id, title, description, priority, due_date)"
         " VALUES (?, ?, ?, ?, ?)",
@@ -60,9 +64,10 @@ def list_tasks(
     page: int = Query(default=1, ge=1, le=10**9),
     page_size: int = Query(default=20, ge=1, le=100),
     conn: sqlite3.Connection = Depends(get_conn),
+    user: dict = Depends(current_user),
 ):
     """List a project's tasks with optional filters, sorting and pagination."""
-    _get_project_or_404(conn, project_id)
+    _get_project_or_404(conn, project_id, user)
 
     where = ["project_id = ?"]
     params: list = [project_id]
@@ -100,13 +105,20 @@ def list_tasks(
 
 
 @router.get("/tasks/{task_id}", response_model=Task)
-def get_task(task_id: int, conn: sqlite3.Connection = Depends(get_conn)):
+def get_task(
+    task_id: int,
+    conn: sqlite3.Connection = Depends(get_conn),
+    user: dict = Depends(current_user),
+):
     return dict(_get_task_or_404(conn, task_id))
 
 
 @router.patch("/tasks/{task_id}", response_model=Task)
 def update_task(
-    task_id: int, body: TaskUpdate, conn: sqlite3.Connection = Depends(get_conn)
+    task_id: int,
+    body: TaskUpdate,
+    conn: sqlite3.Connection = Depends(get_conn),
+    user: dict = Depends(current_user),
 ):
     _get_task_or_404(conn, task_id)
     changes = body.model_dump(exclude_unset=True)
@@ -124,7 +136,11 @@ def update_task(
 
 
 @router.delete("/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_task(task_id: int, conn: sqlite3.Connection = Depends(get_conn)):
+def delete_task(
+    task_id: int,
+    conn: sqlite3.Connection = Depends(get_conn),
+    user: dict = Depends(current_user),
+):
     _get_task_or_404(conn, task_id)
     conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
     conn.commit()

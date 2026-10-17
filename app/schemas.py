@@ -11,6 +11,7 @@ class ProjectCreate(BaseModel):
 
 class Project(ProjectCreate):
     id: int
+    owner_id: int
     created_at: datetime
 
 
@@ -46,3 +47,14 @@ class TaskPage(BaseModel):
     page: int
     page_size: int
     total_pages: int
+
+
+class Credentials(BaseModel):
+    username: str = Field(min_length=3, max_length=50)
+    password: str
+
+
+class UserWithKey(BaseModel):
+    id: int
+    username: str
+    api_key: str
