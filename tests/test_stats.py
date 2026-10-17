@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -135,12 +135,19 @@ def test_dashboard_figures_and_as_of(client):
     assert later["B"]["overdue"] == 1
 
 
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
 class _FrozenDatetime(datetime):
+    """Clock frozen at ``frozen`` on a server running in UTC+5:30."""
+
     frozen: datetime
 
     @classmethod
     def now(cls, tz=None):
-        return cls.frozen.astimezone(tz) if tz else cls.frozen
+        if tz is None:
+            return cls.frozen.astimezone(IST).replace(tzinfo=None)
+        return cls.frozen.astimezone(tz)
 
 
 def test_default_cutoff_uses_utc_date(client, project, monkeypatch):
