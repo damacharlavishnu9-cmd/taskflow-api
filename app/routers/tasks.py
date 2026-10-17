@@ -84,7 +84,7 @@ def list_tasks(
     column = SORT_COLUMNS[sort]
     # Keep tasks without a due date at the end regardless of direction.
     nulls_last = f"{column} IS NULL, " if sort == "due" else ""
-    order_sql = f"{nulls_last}{column} {order.upper()}, id ASC"
+    order_sql = f"{nulls_last}{column} {order.upper()}, id {order.upper()}"
     rows = conn.execute(
         f"SELECT * FROM tasks WHERE {where_sql} ORDER BY {order_sql} LIMIT ? OFFSET ?",
         (*params, page_size, (page - 1) * page_size),

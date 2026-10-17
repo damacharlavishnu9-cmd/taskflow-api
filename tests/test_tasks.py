@@ -140,3 +140,12 @@ def test_sort_by_due_puts_undated_tasks_last(client, project):
 def test_huge_page_number_rejected(client, project):
     resp = client.get(f"/projects/{project['id']}/tasks", params={"page": 10**20})
     assert resp.status_code == 422
+
+
+def test_sort_created_desc_breaks_ties_newest_first(client, project):
+    # Tasks created in the same second share created_at; id decides the order.
+    _seed(client, project["id"], 3)
+    resp = client.get(
+        f"/projects/{project['id']}/tasks", params={"sort": "created", "order": "desc"}
+    ).json()
+    assert [t["id"] for t in resp["items"]] == [3, 2, 1]
