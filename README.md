@@ -44,8 +44,14 @@ without an owner; they are visible only to the admin key until reassigned.
 ## Statistics
 
 - `GET /projects/{id}/stats` returns task totals, completed/open/overdue
-  counts, the completion rate and a per-priority breakdown
-- `GET /stats` returns the same figures for every project you own
+  counts, the completion rate (0 for a project with no tasks) and a
+  per-priority breakdown
+- `GET /stats` returns the same figures for every project you own (all
+  projects for the admin key), computed in a single query
+
+A task is overdue when it is open and due before `as_of` (optional query
+parameter, defaults to today's date in UTC). Pass your local date if you're
+not in UTC.
 
 ## Running locally
 
